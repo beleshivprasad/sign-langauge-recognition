@@ -1,13 +1,15 @@
 """Sing Language Detection in Real Time"""
+import tkinter
+
+
 
 """# 1. Import and Install Dependencies"""
 
 import cv2
 import numpy as np
 import os
-from matplotlib import pyplot as pltf
-import time
 import mediapipe as mp
+
 
 """# 2. Keypoint's using MP Holistic"""
 
@@ -23,20 +25,12 @@ def mediapipe_detection(image, model):
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)  # COLOR COVERSION RGB 2 BGR
     return image, results
 
-def draw_landmarks(image, results):
-    mp_drawing.draw_landmarks(image, results.face_landmarks, mp_holistic.FACEMESH_CONTOURS)  # Draw face connections
-    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS)  # Draw pose connections
-    mp_drawing.draw_landmarks(image, results.left_hand_landmarks,
-                              mp_holistic.HAND_CONNECTIONS)  # Draw left hand connections
-    mp_drawing.draw_landmarks(image, results.right_hand_landmarks,
-                              mp_holistic.HAND_CONNECTIONS)  # Draw right hand connections
-
 def draw_styled_landmarks(image, results):
     # Draw face connections
-    mp_drawing.draw_landmarks(image, results.face_landmarks, mp_holistic.FACEMESH_CONTOURS,
-                              mp_drawing.DrawingSpec(color=(80, 110, 10), thickness=1, circle_radius=1),
-                              mp_drawing.DrawingSpec(color=(80, 256, 121), thickness=1, circle_radius=1)
-                              )
+    # mp_drawing.draw_landmarks(image, results.face_landmarks, mp_holistic.FACEMESH_CONTOURS,
+    #                           mp_drawing.DrawingSpec(color=(80, 110, 10), thickness=1, circle_radius=1),
+    #                           mp_drawing.DrawingSpec(color=(80, 256, 121), thickness=1, circle_radius=1)
+    #                           )
     # Draw pose connections
     mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS,
                               mp_drawing.DrawingSpec(color=(80, 22, 10), thickness=2, circle_radius=4),
@@ -63,21 +57,13 @@ def extract_keypoints(results):
     rh = np.array([[res.x, res.y, res.z] for res in
                    results.right_hand_landmarks.landmark]).flatten() if results.right_hand_landmarks else np.zeros(
         21 * 3)
-    return np.concatenate([lh, rh])
+    return np.concatenate([lh, rh,pose])
 
-
-
-# Path for exported data, numpy arrays
 DATA_PATH = os.path.join('MP_Data')
+# actions =['Hello',"Thank you", "Bye Bye","Indian","Sign","Language",'best of luck','good']
 
-# Actions that we try to detect
-# actions = np.array(['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'])
-actions = np.array(['1','2','3'])
-
-# Thirty videos worth of data
-no_sequences = 20
-
-# Videos are going to be 30 frames in length
+actions = np.array(['Hello',"Thank you", "Bye Bye","Indian","Sign","Language",'best of luck','good'])
+no_sequences = 10
 sequence_length = 30
 
 
@@ -121,7 +107,7 @@ def collect_keypoints_from_actions():
                                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
                         # Show to screen
                         cv2.imshow('OpenCV Feed', image)
-                        cv2.waitKey(2000)
+                        cv2.waitKey(1000)
                     else:
                         cv2.putText(image, 'Collecting frames for {} Video Number {}'.format(action, sequence),
                                     (20,20),
@@ -185,10 +171,14 @@ def collect_keypoints_from_images():
     cv2.destroyAllWindows()
 
 def preprocess_data_and_train_model():
+    import  tensorflow as tf
     from sklearn.model_selection import train_test_split
     from tensorflow.keras.utils import to_categorical
-    label_map = {label: num for num, label in enumerate(actions)}
 
+    # actions = np.array(['Hello',"How are you?", "I am fine"])
+    # print(actions)
+    # actions =['Hello',"Thank you", "Bye Bye","Indian","Sign","Language",'best of luck','good']
+    label_map = {label: num for num, label in enumerate(actions)}
     sequences, labels = [], []
     for action in actions:
         for sequence in range(no_sequences):
@@ -211,7 +201,7 @@ def preprocess_data_and_train_model():
     tb_callback = TensorBoard(log_dir=log_dir)
 
     model = Sequential()
-    model.add(LSTM(64, return_sequences=True, activation='relu', input_shape=(20,126)))
+    model.add(LSTM(64, return_sequences=True, activation='relu', input_shape=(30,258)))
     model.add(LSTM(128, return_sequences=True, activation='relu'))
     model.add(LSTM(64, return_sequences=False, activation='relu'))
     model.add(Dense(64, activation='relu'))
@@ -230,6 +220,13 @@ def preprocess_data_and_train_model():
     model.save('action.h5')
     model.load_weights('action.h5')
 
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    tflite_model = converter.convert()
+
+    # Save the model.
+    with open('action.tflite', 'wb') as f:
+        f.write(tflite_model)
+
     """# 10. Evaluation using Confusion Matrix and Accuracy"""
 
     from sklearn.metrics import multilabel_confusion_matrix, accuracy_score
@@ -242,43 +239,37 @@ def preprocess_data_and_train_model():
     accuracy_score(ytrue, yhat)
 
 def test_real_time():
+    # actions =['Hello',"Thank you", "Bye Bye","Indian","Sign","Language",'best of luck','good']
     from tensorflow import keras
-    model = keras.models.load_model('model_123.h5')
+    model = keras.models.load_model('action.h5')
     sequence = []
     sentence = []
-    threshold = 1
+    prediction  =""
     cap = cv2.VideoCapture(0)
-    # Set mediapipe model
     with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
         while cap.isOpened():
-
-            # Read feed
             ret, frame = cap.read()
-
-            # Make detections
             image, results = mediapipe_detection(frame, holistic)
-
-            # Draw landmarks
             if results.face_landmarks and results.pose_landmarks and (results.left_hand_landmarks or results.right_hand_landmarks):
                 draw_styled_landmarks(image, results)
-                # 2. Prediction logic
                 keypoints = extract_keypoints(results)
                 sequence.append(keypoints)
                 sequence = sequence[-30:]
                 if len(sequence) == 30:
                     res = model.predict(np.expand_dims(sequence, axis=0))[0]
-                    # print(np.argmax(res),res)
-                    if(np.max(res)>0.8):
+                    if (np.max(res) > 0.9):
                         print(actions[np.argmax(res)])
+                        prediction = actions[np.argmax(res)]
                     else:
-                        print(np.max(res))
-                # Show to screen
+                        print(actions[np.argmax(res)])
+                        print(res,np.max(res))
                 cv2.imshow('OpenCV Feed', image)
             else:
+                if prediction!="":
+                    if prediction not in sentence:
+                        sentence.append(prediction)
+                    print(sentence)
                 image=cv2.putText(image,"Unknown Gesture",(30,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,233,44),3,cv2.LINE_AA)
-                #Add border
-                # image = cv2.copyMakeBorder(image, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=(255,0,0))
-
                 cv2.imshow('OpenCV Feed', image)
 
             # Break gracefully
@@ -294,3 +285,5 @@ def test_real_time():
 # collect_keypoints_from_images()
 # preprocess_data_and_train_model()
 test_real_time()
+
+
